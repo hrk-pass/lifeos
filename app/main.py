@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.db import Base, engine, get_db
 from app.db_migrate import migrate_annotations_item_index
-from app.models import Annotation, Capture, ParsedEvent, USER_CATEGORIES
+from app.models import Annotation, Capture, EventDraft, ParsedEvent, QuickEvent, USER_CATEGORIES
 from app.parsed_items import extract_items
-from app.routes import analyze, annotations, capture
+from app.routes import analyze, annotations, capture, drafts, quick_add
+from app.services.draft_service import draft_to_dict
 
 # テーブルがなければ作成（初回起動時）
 Base.metadata.create_all(bind=engine)
@@ -29,6 +30,8 @@ app = FastAPI(
 app.include_router(capture.router)
 app.include_router(analyze.router)
 app.include_router(annotations.router)
+app.include_router(quick_add.router)
+app.include_router(drafts.router)
 
 # Jinja2 テンプレート（app/templates/）
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -73,9 +76,47 @@ def _annotations_by_parsed_event(
     return {(row.parsed_event_id, row.item_index): row for row in rows}
 
 
+def _format_parsed_json_display(parsed_json: dict) -> str:
+    """タイムライン用の parsed_json 表示文字列"""
+    if not parsed_json:
+        return "—"
+    return json.dumps(parsed_json, ensure_ascii=False, indent=2)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)):
-    """保存済みキャプチャと最新の AI 解析結果を新しい順に HTML で表示"""
+    """下書き・確定イベント・キャプチャ・解析結果を新しい順に HTML で表示"""
+    draft_stmt = select(EventDraft).order_by(EventDraft.updated_at.desc())
+    draft_rows = db.scalars(draft_stmt).all()
+    event_drafts = []
+    for row in draft_rows:
+        d = draft_to_dict(row)
+        d["created_at_display"] = _format_datetime(row.created_at)
+        d["updated_at_display"] = _format_datetime(row.updated_at)
+        d["draft_json_display"] = _format_parsed_json_display(d["draft_json"])
+        d["is_editable"] = row.status == "draft"
+        event_drafts.append(d)
+
+    quick_stmt = select(QuickEvent).order_by(QuickEvent.created_at.desc())
+    quick_rows = db.scalars(quick_stmt).all()
+    quick_events = []
+    for row in quick_rows:
+        try:
+            parsed_obj = json.loads(row.parsed_json)
+        except json.JSONDecodeError:
+            parsed_obj = {}
+        quick_events.append(
+            {
+                "id": row.id,
+                "raw_text": row.raw_text,
+                "event_type": row.event_type,
+                "confidence": row.confidence,
+                "parsed_json": parsed_obj,
+                "parsed_json_display": _format_parsed_json_display(parsed_obj),
+                "created_at_display": _format_datetime(row.created_at),
+            }
+        )
+
     stmt = select(Capture).order_by(Capture.created_at.desc())
     rows = db.scalars(stmt).all()
     latest_parsed = _latest_parsed_by_capture(db)
@@ -127,15 +168,19 @@ def index(request: Request, db: Session = Depends(get_db)):
                 }
             )
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
+            "event_drafts": event_drafts,
+            "quick_events": quick_events,
             "captures": captures,
             "analyzed_rows": analyzed_rows,
             "user_categories": USER_CATEGORIES,
         },
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _truncate(text: str, max_len: int) -> str:

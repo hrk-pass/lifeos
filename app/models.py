@@ -9,6 +9,16 @@ from app.db import Base
 
 EVENT_TYPES = frozenset({"purchase", "inventory", "food", "unknown"})
 
+FOOD_EVENT_TYPES = frozenset({
+    "meal",
+    "batch_created",
+    "consumed",
+    "purchase",
+    "unknown",
+})
+
+DRAFT_STATUSES = frozenset({"draft", "confirmed", "discarded"})
+
 USER_CATEGORIES = (
     "food",
     "daily",
@@ -110,4 +120,45 @@ class Annotation(Base):
 
     parsed_event: Mapped["ParsedEvent"] = relationship(
         "ParsedEvent", back_populates="annotations"
+    )
+
+
+class EventDraft(Base):
+    """AI 生成の下書き（人間レビュー後に quick_events へ Commit）"""
+
+    __tablename__ = "event_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
+class QuickEvent(Base):
+    """Commit 済みの確定イベント（raw_text 不変）"""
+
+    __tablename__ = "quick_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    parsed_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )

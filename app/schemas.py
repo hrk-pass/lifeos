@@ -49,3 +49,41 @@ class AnnotationSuccess(BaseModel):
     user_category: str | None = None
     memo: str | None = None
     tags_json: str = "[]"
+
+
+class QuickAddRequest(BaseModel):
+    """POST /quick-add / POST /drafts のリクエストボディ"""
+
+    text: str = Field(..., min_length=1, description="自然文（例: 昼 カレー）")
+
+
+class DraftCreateRequest(BaseModel):
+    """POST /drafts のリクエストボディ"""
+
+    text: str = Field(..., min_length=1, description="自然文（例: 夜 カレー）")
+
+
+class DraftReviseRequest(BaseModel):
+    """POST /drafts/{draft_id}/revise のリクエストボディ"""
+
+    instruction: str = Field(..., min_length=1, description="修正指示（例: 2杯だった）")
+
+
+class DraftResponse(BaseModel):
+    """Draft の API レスポンス"""
+
+    id: int
+    raw_text: str
+    event_type: str
+    draft_json: dict
+    confidence: float
+    status: str
+
+
+class DraftSuccess(BaseModel):
+    """Commit / Discard のレスポンス"""
+
+    success: bool = True
+    draft_id: int
+    quick_event_id: int | None = None
+    status: str

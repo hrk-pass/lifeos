@@ -1,19 +1,14 @@
-"""Gemini API によるキャプチャ文字列の構造化解析"""
+"""Gemini API によるキャプチャ文字列の構造化解析（OCR / レシート向け）"""
 
-import json
-import os
 import re
 from typing import Literal
 
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.models import EVENT_TYPES
+from app.services.ai.client import extract_json_from_text, generate_content
 
 ALLOWED_EVENT_TYPES = EVENT_TYPES
-DEFAULT_MODEL = "gemini-2.5-flash"
-FALLBACK_MODEL = "gemini-1.5-flash"
 
 # parsed_json に保存してよいキー（この一覧以外は捨てる）
 _PARSED_JSON_KEYS = frozenset({
@@ -100,6 +95,7 @@ _STRICT_RETRY_SUFFIX = """
 決済方法・カード下4桁が分かれば payment 配列に分けて入れてください。
 """
 
+
 class PurchaseItem(BaseModel):
     name: str
     price: float | None = None
@@ -136,48 +132,6 @@ class CaptureParseResult(BaseModel):
         default=None,
         description="（互換）カード下4桁。保存時は payment 配列へ変換",
     )
-
-
-def _get_api_key() -> str:
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError(
-            "GEMINI_API_KEY が設定されていません。.env に GEMINI_API_KEY=... を追加してください。"
-        )
-    return key
-
-
-def _get_model_name() -> str:
-    return os.getenv("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-
-
-def extract_json_from_text(text: str) -> dict:
-    """Gemini 返答から JSON オブジェクトを抽出する（フェンス・説明文混在に対応）"""
-    cleaned = text.strip()
-    if not cleaned:
-        raise ValueError("空のレスポンスです")
-
-    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
-    if fence_match:
-        cleaned = fence_match.group(1).strip()
-
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    brace_match = re.search(r"\{[\s\S]*\}", cleaned)
-    if brace_match:
-        try:
-            parsed = json.loads(brace_match.group(0))
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"JSON のパースに失敗しました: {exc}") from exc
-
-    raise ValueError("レスポンスから JSON オブジェクトを抽出できませんでした")
 
 
 def _normalize_card_last4(value: object) -> str | None:
@@ -291,7 +245,6 @@ def _normalize_parsed_json(data: dict) -> dict:
         canonical = _canonical_field_key(key)
         if canonical is None:
             continue
-        # 正規キーが既にあるときは別名で上書きしない（shop → store など）
         if canonical in merged and key != canonical:
             continue
         merged[canonical] = value
@@ -314,7 +267,6 @@ def _normalize_parsed_json(data: dict) -> dict:
             continue
         parsed_json[key] = value
 
-    # Pydantic model_dump 後の items / payment を plain dict に
     items = parsed_json.get("items")
     if isinstance(items, list):
         parsed_json["items"] = [
@@ -386,40 +338,6 @@ def _needs_retry(result: dict, raw_text: str) -> bool:
     return len(raw_text.strip()) >= 20
 
 
-def _call_gemini(raw_text: str, *, strict: bool = False) -> str:
-    client = genai.Client(api_key=_get_api_key())
-    prompt = _PROMPT_TEMPLATE.format(text=raw_text)
-    if strict:
-        prompt += _STRICT_RETRY_SUFFIX
-
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=CaptureParseResult,
-        temperature=0.2,
-    )
-
-    model_name = _get_model_name()
-    models_to_try = [model_name]
-    if model_name != FALLBACK_MODEL:
-        models_to_try.append(FALLBACK_MODEL)
-
-    last_error: Exception | None = None
-    for name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=name,
-                contents=prompt,
-                config=config,
-            )
-            if response.text:
-                return response.text
-            raise ValueError("Gemini から空のテキストが返されました")
-        except Exception as exc:
-            last_error = exc
-
-    raise RuntimeError(f"Gemini API 呼び出しに失敗しました: {last_error}") from last_error
-
-
 def parse_capture_text(raw_text: str) -> dict:
     """
     raw_text を Gemini で解析し、正規化済みの dict を返す。
@@ -431,9 +349,9 @@ def parse_capture_text(raw_text: str) -> dict:
     if not text:
         raise ValueError("解析対象のテキストが空です")
 
-    response_text = _call_gemini(text)
+    prompt = _PROMPT_TEMPLATE.format(text=text)
+    response_text = generate_content(prompt, response_schema=CaptureParseResult)
     raw_data = extract_json_from_text(response_text)
-    # Pydantic スキーマ出力をフラット dict に展開
     if "parsed_json" not in raw_data or not raw_data.get("parsed_json"):
         try:
             model = CaptureParseResult.model_validate(raw_data)
@@ -443,7 +361,8 @@ def parse_capture_text(raw_text: str) -> dict:
     result = validate_parse_result(raw_data, raw_text=text)
 
     if _needs_retry(result, text):
-        retry_text = _call_gemini(text, strict=True)
+        retry_prompt = prompt + _STRICT_RETRY_SUFFIX
+        retry_text = generate_content(retry_prompt, response_schema=CaptureParseResult)
         retry_result = validate_parse_result(
             extract_json_from_text(retry_text), raw_text=text
         )

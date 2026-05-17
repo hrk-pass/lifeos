@@ -1,7 +1,9 @@
 # LifeOS — 生活イベント収集 MVP
 
-家計簿ではなく、iPhone から送られた OCR 文字列を**そのまま**保存し、Gemini API で**構造化イベント**に変換する最小基盤です。
+家計簿ではなく、自然文や OCR 文字列を**そのまま**保存し、Gemini API で**構造化イベント**に変換する最小基盤です。
 
+- **event_drafts**: AI 下書き（人間レビュー前。mutable）
+- **quick_events**: Commit 済みの確定イベント（immutable raw_text）
 - **captures**: 生の OCR 文字列（不変の生データ）
 - **parsed_events**: AI による解釈結果（再解析可能）
 
@@ -12,15 +14,22 @@ lifeos/
 ├── app/
 │   ├── main.py              # FastAPI 起動・一覧・ルート登録
 │   ├── db.py                # SQLite 接続
-│   ├── models.py            # captures / parsed_events
+│   ├── models.py            # event_drafts / quick_events / captures
 │   ├── schemas.py           # API の型定義
 │   ├── routes/
+│   │   ├── drafts.py        # Draft / Revise / Commit / Discard
+│   │   ├── quick_add.py     # POST /quick-add（Draft 作成へ委譲）
 │   │   ├── capture.py       # POST /capture
 │   │   └── analyze.py       # POST /analyze/{capture_id}
 │   ├── services/
-│   │   └── ai_parser.py     # Gemini 解析
+│   │   ├── draft_service.py
+│   │   ├── ai/
+│   │   │   ├── client.py
+│   │   │   ├── food_event_parser.py
+│   │   │   └── draft_revision_parser.py
+│   │   └── ai_parser.py     # OCR / レシート解析
 │   └── templates/
-│       └── index.html       # 一覧 HTML（解析ボタン付き）
+│       └── index.html       # 一覧 HTML（クイック入力・タイムライン）
 ├── data/
 │   └── lifeos.db            # SQLite（初回起動で自動作成）
 ├── requirements.txt
@@ -57,11 +66,11 @@ pip install -r requirements.txt
 GEMINI_API_KEY=あなたのAPIキー
 ```
 
-コスト重視の場合、デフォルトで `gemini-2.5-flash` を使用します（失敗時は `gemini-1.5-flash` にフォールバック）。  
+コスト重視の場合、デフォルトで `gemini-2.5-flash` を使用します（失敗時は `gemini-2.0-flash` → `gemini-2.5-flash-lite` にフォールバック）。  
 モデルを変える場合:
 
 ```env
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.0-flash
 ```
 
 ### 5. サーバー起動
@@ -84,7 +93,127 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - 一覧画面（Mac）: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
 - iPhone 用 POST URL の例: `http://192.168.0.73:8000/capture`（IP は環境により異なります）
 
-## AI 解析フロー
+## Draft Workflow（自然文 → レビュー → Commit）
+
+AI 出力は**候補（下書き）**として保存し、人間が確認・修正してから確定します。
+
+```
+自然文（例: 夜 カレー）
+    ↓
+POST /drafts  →  event_drafts（status=draft）
+    ↓
+人間が確認
+    ↓
+POST /drafts/{id}/revise  （例: 「2杯だった」）
+    ↓
+POST /drafts/{id}/commit  →  quick_events（確定のみ）
+```
+
+- **raw_text**: 不変（event_drafts / quick_events 両方）
+- **draft_json**: AI が生成・修正（mutable）
+- **Discard**: レコードは残し `status=discarded` のみ
+
+### 自然文入力例
+
+
+| 入力          | 想定 event_type |
+| ----------- | ------------- |
+| `昼 カレー`     | meal          |
+| `カレー作った 6食` | batch_created |
+| `牛乳飲み切った`   | consumed      |
+
+
+### POST /drafts（下書き作成）
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts \
+  -H "Content-Type: application/json" \
+  -d '{"text": "夜 カレー"}'
+```
+
+レスポンス例:
+
+```json
+{
+  "id": 1,
+  "raw_text": "夜 カレー",
+  "event_type": "meal",
+  "draft_json": {
+    "meal_type": "dinner",
+    "items": [{ "name": "カレー", "quantity": 1 }]
+  },
+  "confidence": 0.9,
+  "status": "draft"
+}
+```
+
+### POST /drafts/{draft_id}/revise（自然文修正）
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/1/revise \
+  -H "Content-Type: application/json" \
+  -d '{"instruction": "2杯だった"}'
+```
+
+修正後の `draft_json` 例（数量変更）:
+
+```json
+{
+  "meal_type": "dinner",
+  "items": [{ "name": "カレー", "quantity": 2 }]
+}
+```
+
+修正時は **event_type を維持** します（「使い切った」「作った」など種別変更の指示があるときだけ変更）。`meal` の下書きに `consumed` 用フィールドが混ざらないよう正規化します。
+
+一部使用の例（`consumed` のとき。`target` に全部入れない）:
+
+```json
+{
+  "target": "ナポリタンの素",
+  "source": "業務スーパー",
+  "quantity_total": 3,
+  "quantity_used": 1,
+  "quantity_remaining": 2
+}
+```
+
+### POST /drafts/{draft_id}/commit（確定）
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/1/commit
+```
+
+レスポンス:
+
+```json
+{
+  "success": true,
+  "draft_id": 1,
+  "quick_event_id": 5,
+  "status": "confirmed"
+}
+```
+
+### POST /drafts/{draft_id}/discard（破棄）
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/1/discard
+```
+
+### POST /drafts/{draft_id}/regenerate（raw_text から再生成）
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/1/regenerate
+```
+
+### POST /quick-add（後方互換）
+
+`POST /drafts` と同じ（下書きを作成。即 Commit しない）。
+
+`event_type` の候補: `meal` / `batch_created` / `consumed` / `purchase` / `unknown`
+
+## AI 解析フロー（OCR / レシート）
 
 ```
 iPhone OCR
@@ -150,7 +279,7 @@ curl -X POST http://127.0.0.1:8000/analyze/1
 }
 ```
 
-`event_type` の候補: `purchase` / `inventory` / `food` / `unknown`
+`event_type` の候補（OCR 向け）: `purchase` / `inventory` / `food` / `unknown`
 
 ## iPhone ショートカットから POST する方法
 

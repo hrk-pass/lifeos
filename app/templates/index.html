@@ -182,18 +182,205 @@
       color: #b91c1c;
       margin-top: 0.25rem;
     }
+
+    .quick-add {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .quick-add h2 {
+      font-size: 0.95rem;
+      margin: 0 0 0.75rem;
+      font-weight: 600;
+    }
+    .quick-add-form {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .quick-add-input {
+      flex: 1;
+      min-width: 12rem;
+      font-size: 1rem;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    .btn-quick-add {
+      font-size: 0.9rem;
+      padding: 0.55rem 1.25rem;
+      border: none;
+      border-radius: 6px;
+      background: #047857;
+      color: #fff;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-quick-add:hover:not(:disabled) { background: #065f46; }
+    .btn-quick-add:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    #quick-add-error {
+      color: #b91c1c;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
+
+    .event-type-meal { background: #fef3c7; color: #92400e; }
+    .event-type-batch_created { background: #dbeafe; color: #1e40af; }
+    .event-type-consumed { background: #fce7f3; color: #9d174d; }
+    .event-type-purchase { background: #d1fae5; color: #065f46; }
+    .event-type-unknown { background: #f3f4f6; color: #4b5563; }
+
+    .parsed-json {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      font-family: ui-monospace, monospace;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 0.5rem 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #374151;
+    }
+    .raw-inline {
+      font-size: 1rem;
+      font-weight: 500;
+      margin: 0.35rem 0 0;
+    }
+    .confidence {
+      font-size: 0.7rem;
+      color: #888;
+    }
+
+    .status-draft { background: #fef3c7; color: #92400e; }
+    .status-confirmed { background: #d1fae5; color: #065f46; }
+    .status-discarded { background: #f3f4f6; color: #6b7280; }
+
+    .draft-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      align-items: flex-end;
+    }
+    .revise-input {
+      flex: 1;
+      min-width: 10rem;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    .btn-revise { background: #7c3aed; }
+    .btn-revise:hover:not(:disabled) { background: #6d28d9; }
+    .btn-commit { background: #047857; }
+    .btn-commit:hover:not(:disabled) { background: #065f46; }
+    .btn-discard { background: #6b7280; }
+    .btn-discard:hover:not(:disabled) { background: #4b5563; }
+    .btn-regenerate { background: #1a56db; }
+    .btn-regenerate:hover:not(:disabled) { background: #1e40af; }
+    .btn-revise, .btn-commit, .btn-discard, .btn-regenerate {
+      font-size: 0.75rem;
+      padding: 0.4rem 0.75rem;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      cursor: pointer;
+    }
+    .btn-revise:disabled, .btn-commit:disabled, .btn-discard:disabled, .btn-regenerate:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .card-readonly { opacity: 0.85; }
   </style>
 </head>
 <body>
   <h1>LifeOS</h1>
-  <p class="meta">キャプチャ {{ captures | length }} 件 · 内訳 {{ analyzed_rows | length }} 行</p>
+  <p class="meta">下書き {{ event_drafts | length }} 件 · 確定 {{ quick_events | length }} 件 · キャプチャ {{ captures | length }} 件</p>
+
+  <section class="quick-add" aria-label="自然文入力">
+    <h2>自然文入力 → AI 下書き</h2>
+    <form class="quick-add-form" id="quick-add-form" onsubmit="submitDraft(event)">
+      <input
+        type="text"
+        class="quick-add-input"
+        id="quick-add-text"
+        name="text"
+        placeholder="例: 夜 カレー / カレー作った 6食 / 牛乳飲み切った"
+        autocomplete="off"
+        required
+      >
+      <button type="submit" class="btn-quick-add" id="quick-add-btn">下書き作成</button>
+    </form>
+    <p id="quick-add-error" hidden></p>
+  </section>
 
   <nav class="tabs" role="tablist">
-    <button type="button" class="tab active" data-tab="captures" role="tab" aria-selected="true">元データ</button>
+    <button type="button" class="tab active" data-tab="drafts" role="tab" aria-selected="true">下書き</button>
+    <button type="button" class="tab" data-tab="committed" role="tab" aria-selected="false">確定済み</button>
+    <button type="button" class="tab" data-tab="captures" role="tab" aria-selected="false">元データ</button>
     <button type="button" class="tab" data-tab="analyzed" role="tab" aria-selected="false">解析済み</button>
   </nav>
 
-  <section id="panel-captures" class="tab-panel active" role="tabpanel">
+  <section id="panel-drafts" class="tab-panel active" role="tabpanel">
+    {% if event_drafts %}
+      {% for d in event_drafts %}
+      <article class="card {% if not d.is_editable %}card-readonly{% endif %}" id="draft-{{ d.id }}">
+        <div class="card-header">
+          <div class="card-header-left">
+            <time>{{ d.updated_at_display }}</time>
+            <span class="status status-{{ d.status }}">{{ d.status }}</span>
+            <span class="event-type-badge event-type-{{ d.event_type }}">{{ d.event_type }}</span>
+            <span class="confidence">信頼度 {{ "%.0f"|format(d.confidence * 100) }}%</span>
+          </div>
+        </div>
+        <p class="raw-inline">{{ d.raw_text }}</p>
+        <pre class="parsed-json">{{ d.draft_json_display }}</pre>
+        {% if d.is_editable %}
+        <div class="draft-actions">
+          <input type="text" class="revise-input" id="revise-{{ d.id }}" placeholder="修正指示（例: 2杯だった）">
+          <button type="button" class="btn-revise" onclick="reviseDraft({{ d.id }})">修正</button>
+          <button type="button" class="btn-regenerate" onclick="regenerateDraft({{ d.id }})">再生成</button>
+          <button type="button" class="btn-commit" onclick="commitDraft({{ d.id }})">Commit</button>
+          <button type="button" class="btn-discard" onclick="discardDraft({{ d.id }})">Discard</button>
+        </div>
+        <p class="inline-error" id="draft-error-{{ d.id }}" hidden></p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="empty">下書きがありません。<br>上のフォームから自然文を入力してください。</p>
+    {% endif %}
+  </section>
+
+  <section id="panel-committed" class="tab-panel" role="tabpanel">
+    {% if quick_events %}
+      {% for e in quick_events %}
+      <article class="card" id="quick-{{ e.id }}">
+        <div class="card-header">
+          <div class="card-header-left">
+            <time>{{ e.created_at_display }}</time>
+            <span class="event-type-badge event-type-{{ e.event_type }}">{{ e.event_type }}</span>
+            <span class="confidence">信頼度 {{ "%.0f"|format(e.confidence * 100) }}%</span>
+          </div>
+        </div>
+        <p class="raw-inline">{{ e.raw_text }}</p>
+        <pre class="parsed-json">{{ e.parsed_json_display }}</pre>
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="empty">確定済みイベントがありません。<br>下書きをレビューして Commit してください。</p>
+    {% endif %}
+  </section>
+
+  <section id="panel-captures" class="tab-panel" role="tabpanel">
     {% if captures %}
       {% for c in captures %}
       <article class="card" id="capture-{{ c.id }}">
@@ -301,6 +488,8 @@
     (function initTabs() {
       const tabs = document.querySelectorAll(".tab");
       const panels = {
+        drafts: document.getElementById("panel-drafts"),
+        committed: document.getElementById("panel-committed"),
         captures: document.getElementById("panel-captures"),
         analyzed: document.getElementById("panel-analyzed"),
       };
@@ -320,10 +509,150 @@
       tabs.forEach((t) => t.addEventListener("click", () => activate(t.dataset.tab)));
 
       const hash = location.hash.replace("#", "");
-      if (hash === "analyzed" || hash === "captures") {
+      if (hash === "analyzed" || hash === "captures" || hash === "drafts" || hash === "committed") {
         activate(hash);
       }
     })();
+
+    function parseErrorDetail(data, fallback) {
+      const detail = data.detail;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((d) => d.msg || JSON.stringify(d)).join(", ");
+      }
+      return fallback;
+    }
+
+    async function submitDraft(event) {
+      event.preventDefault();
+      const input = document.getElementById("quick-add-text");
+      const btn = document.getElementById("quick-add-btn");
+      const errorEl = document.getElementById("quick-add-error");
+      const text = input.value.trim();
+      if (!text) return;
+
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "解析中...";
+
+      try {
+        const res = await fetch("/drafts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(parseErrorDetail(data, "下書き作成に失敗しました"));
+        location.href = "/#drafts";
+        location.reload();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    }
+
+    async function draftAction(draftId, path, options) {
+      const errorEl = document.getElementById("draft-error-" + draftId);
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+
+      const res = await fetch("/drafts/" + draftId + path, options || { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(parseErrorDetail(data, "操作に失敗しました"));
+      return data;
+    }
+
+    function updateDraftCard(draftId, data) {
+      const card = document.getElementById("draft-" + draftId);
+      if (!card || !data) return;
+
+      const badge = card.querySelector(".event-type-badge");
+      if (badge) {
+        badge.textContent = data.event_type;
+        badge.className = "event-type-badge event-type-" + data.event_type;
+      }
+
+      const conf = card.querySelector(".confidence");
+      if (conf && data.confidence != null) {
+        conf.textContent = "信頼度 " + Math.round(data.confidence * 100) + "%";
+      }
+
+      const pre = card.querySelector(".parsed-json");
+      if (pre && data.draft_json) {
+        pre.textContent = JSON.stringify(data.draft_json, null, 2);
+      }
+    }
+
+    async function reviseDraft(draftId) {
+      const input = document.getElementById("revise-" + draftId);
+      const instruction = input.value.trim();
+      if (!instruction) return;
+
+      const errorEl = document.getElementById("draft-error-" + draftId);
+      const btn = document.querySelector("#draft-" + draftId + " .btn-revise");
+      if (btn) btn.disabled = true;
+
+      try {
+        const data = await draftAction(draftId, "/revise", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction }),
+        });
+        updateDraftCard(draftId, data);
+        input.value = "";
+        errorEl.textContent = "更新しました";
+        errorEl.style.color = "#047857";
+        errorEl.hidden = false;
+        setTimeout(() => {
+          window.location.href = "/?r=" + Date.now() + "#drafts";
+          window.location.reload();
+        }, 400);
+      } catch (err) {
+        errorEl.style.color = "#b91c1c";
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function regenerateDraft(draftId) {
+      try {
+        await draftAction(draftId, "/regenerate");
+        location.reload();
+      } catch (err) {
+        const errorEl = document.getElementById("draft-error-" + draftId);
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    }
+
+    async function commitDraft(draftId) {
+      try {
+        await draftAction(draftId, "/commit");
+        location.href = "/#committed";
+        location.reload();
+      } catch (err) {
+        const errorEl = document.getElementById("draft-error-" + draftId);
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    }
+
+    async function discardDraft(draftId) {
+      if (!confirm("この下書きを破棄しますか？")) return;
+      try {
+        await draftAction(draftId, "/discard");
+        location.reload();
+      } catch (err) {
+        const errorEl = document.getElementById("draft-error-" + draftId);
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    }
 
     function rowSuffix(parsedEventId, itemIndex) {
       return parsedEventId + "-" + itemIndex;
