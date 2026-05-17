@@ -87,3 +87,38 @@ class DraftSuccess(BaseModel):
     draft_id: int
     quick_event_id: int | None = None
     status: str
+    linked_ingredient_count: int | None = None
+
+
+class PurchaseItemOut(BaseModel):
+    """購入商品（材料紐付け用）"""
+
+    id: int
+    parsed_event_id: int
+    item_name: str
+    price: float | None = None
+    quantity: float | None = None
+    created_at: str | None = None
+
+
+class IngredientCandidatesResponse(BaseModel):
+    """POST /drafts/{id}/ingredient-candidates のレスポンス"""
+
+    candidate_ingredients: list[str]
+    purchase_items: list[PurchaseItemOut]
+    linked_purchase_item_ids: list[int] = Field(default_factory=list)
+
+
+class LinkIngredientsRequest(BaseModel):
+    """POST /drafts/{id}/link-ingredients のリクエスト"""
+
+    purchase_item_ids: list[int] = Field(default_factory=list)
+
+
+class LinkIngredientsResponse(BaseModel):
+    """POST /drafts/{id}/link-ingredients のレスポンス"""
+
+    success: bool = True
+    draft_id: int
+    linked_count: int
+    linked_purchase_item_ids: list[int]

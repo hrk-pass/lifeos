@@ -6,6 +6,9 @@
 - **quick_events**: Commit 済みの確定イベント（immutable raw_text）
 - **captures**: 生の OCR 文字列（不変の生データ）
 - **parsed_events**: AI による解釈結果（再解析可能）
+- **purchase_items**: 購入イベント内の商品行（Batch / Meal 紐付けの単位）
+- **batch_ingredients**: 確定 Batch と purchase_items の関連（数量なし）
+- **draft_ingredient_links**: 下書き段階の材料選択（Commit 時に batch_ingredients へ）
 
 ## ディレクトリ構成
 
@@ -17,16 +20,19 @@ lifeos/
 │   ├── models.py            # event_drafts / quick_events / captures
 │   ├── schemas.py           # API の型定義
 │   ├── routes/
-│   │   ├── drafts.py        # Draft / Revise / Commit / Discard
+│   │   ├── drafts.py        # Draft / Revise / Commit / Ingredient Linking
 │   │   ├── quick_add.py     # POST /quick-add（Draft 作成へ委譲）
 │   │   ├── capture.py       # POST /capture
 │   │   └── analyze.py       # POST /analyze/{capture_id}
 │   ├── services/
 │   │   ├── draft_service.py
+│   │   ├── purchase_item_service.py
+│   │   ├── ingredient_service.py
 │   │   ├── ai/
 │   │   │   ├── client.py
 │   │   │   ├── food_event_parser.py
-│   │   │   └── draft_revision_parser.py
+│   │   │   ├── draft_revision_parser.py
+│   │   │   └── ingredient_candidate_parser.py
 │   │   └── ai_parser.py     # OCR / レシート解析
 │   └── templates/
 │       └── index.html       # 一覧 HTML（クイック入力・タイムライン）
@@ -212,6 +218,74 @@ curl -X POST http://127.0.0.1:8000/drafts/1/regenerate
 `POST /drafts` と同じ（下書きを作成。即 Commit しない）。
 
 `event_type` の候補: `meal` / `batch_created` / `consumed` / `purchase` / `unknown`
+
+## Ingredient Linking（購入食品 → Batch）
+
+購入（OCR / レシート）と作り置き（Batch）を**緩く**紐付けます。在庫・重量管理は行いません。
+
+```
+Purchase（OCR 解析）
+    ↓
+parsed_events + purchase_items（商品行を DB に展開）
+    ↓
+Batch 下書き（例: カレー作った 6食）
+    ↓
+POST /drafts/{id}/ingredient-candidates  →  AI が候補名を提案（mutable）
+    ↓
+人間がチェック → POST /drafts/{id}/link-ingredients  →  draft_ingredient_links（DB が真実）
+    ↓
+POST /drafts/{id}/commit  →  quick_events + batch_ingredients
+```
+
+- **AI の責務**: `candidate_ingredients` の提案のみ（推測しすぎない）
+- **DB の責務**: 人間が選んだ `purchase_item_id` のリンク（deterministic）
+- **raw_text / captures**: 不変。AI 解釈（parsed_json / draft_json）は mutable。材料リンクは別テーブル
+
+### purchase_items
+
+`POST /analyze/{capture_id}` で `event_type=purchase` のとき、`parsed_json.items` から自動生成されます。  
+機能追加前に解析済みのレシートは、**サーバー起動時・一覧表示時**に過去の `parsed_events` から自動バックフィルされます。
+
+
+| カラム               | 説明                |
+| ----------------- | ----------------- |
+| `parsed_event_id` | 元の解析イベント          |
+| `item_name`       | 商品名               |
+| `price`           | 単価（任意）            |
+| `quantity`        | 数量（今回は未使用・NULL 可） |
+
+
+### POST /drafts/{draft_id}/ingredient-candidates
+
+下書き内容と過去の `purchase_items` を Gemini に渡し、購入リスト内の名称だけを候補として返します。
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/2/ingredient-candidates
+```
+
+レスポンス例:
+
+```json
+{
+  "candidate_ingredients": ["鶏肉", "玉ねぎ", "カレールー"],
+  "purchase_items": [
+    { "id": 1, "item_name": "鶏肉", "price": 198, "parsed_event_id": 3 }
+  ],
+  "linked_purchase_item_ids": []
+}
+```
+
+### POST /drafts/{draft_id}/link-ingredients
+
+```bash
+curl -X POST http://127.0.0.1:8000/drafts/2/link-ingredients \
+  -H "Content-Type: application/json" \
+  -d '{"purchase_item_ids": [1, 2, 3]}'
+```
+
+Commit 時（`event_type=batch_created`）に `batch_ingredients` へコピーされます。
+
+一覧 UI の Batch 下書きカードからも「候補を取得」「紐付けを保存」が利用できます。
 
 ## AI 解析フロー（OCR / レシート）
 

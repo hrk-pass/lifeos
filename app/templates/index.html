@@ -299,6 +299,70 @@
       cursor: not-allowed;
     }
     .card-readonly { opacity: 0.85; }
+
+    .ingredient-panel {
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      background: #fafafa;
+    }
+    .ingredient-panel h3 {
+      font-size: 0.85rem;
+      margin: 0 0 0.5rem;
+      font-weight: 600;
+      color: #374151;
+    }
+    .ingredient-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin: 0.5rem 0;
+      max-height: 12rem;
+      overflow-y: auto;
+    }
+    .ingredient-list label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .ingredient-list .item-price {
+      color: #888;
+      font-size: 0.75rem;
+    }
+    .ingredient-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .btn-ingredient-fetch { background: #7c3aed; }
+    .btn-ingredient-fetch:hover:not(:disabled) { background: #6d28d9; }
+    .btn-ingredient-link { background: #047857; }
+    .btn-ingredient-link:hover:not(:disabled) { background: #065f46; }
+    .btn-ingredient-fetch, .btn-ingredient-link {
+      font-size: 0.75rem;
+      padding: 0.4rem 0.75rem;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      cursor: pointer;
+    }
+    .btn-ingredient-fetch:disabled, .btn-ingredient-link:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .linked-ingredients {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #374151;
+    }
+    .linked-ingredients ul {
+      margin: 0.25rem 0 0;
+      padding-left: 1.25rem;
+    }
   </style>
 </head>
 <body>
@@ -343,6 +407,43 @@
         </div>
         <p class="raw-inline">{{ d.raw_text }}</p>
         <pre class="parsed-json">{{ d.draft_json_display }}</pre>
+        {% if d.show_ingredient_linking %}
+        <div class="ingredient-panel" id="ingredient-panel-{{ d.id }}">
+          <h3>材料紐付け（購入食品 → Batch）</h3>
+          <p class="meta" style="margin:0 0 0.5rem">
+            購入商品 {{ purchase_items_catalog | length }} 件。
+            「候補を取得」で AI が使いそうなものにチェックを付けます。
+          </p>
+          <div class="ingredient-actions">
+            <button type="button" class="btn-ingredient-fetch" onclick="fetchIngredientCandidates({{ d.id }})">候補を取得</button>
+            <button type="button" class="btn-ingredient-link" onclick="linkIngredients({{ d.id }})">紐付けを保存</button>
+          </div>
+          {% if purchase_items_catalog %}
+          <div class="ingredient-list" id="ingredient-list-{{ d.id }}">
+            {% for item in purchase_items_catalog %}
+            <label>
+              <input
+                type="checkbox"
+                data-purchase-item-id="{{ item.id }}"
+                {% if item.id in d.linked_purchase_item_ids %}checked{% endif %}
+              >
+              <span>{{ item.item_name }}</span>
+              {% if item.price is not none %}<span class="item-price">¥{{ item.price|int }}</span>{% endif %}
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="meta">購入商品がありません。「元データ」タブでレシートを解析してください。</p>
+          {% endif %}
+          <p class="linked-ingredients" id="ingredient-linked-{{ d.id }}">
+            {% if d.linked_purchase_item_ids %}
+              保存済み: {% for item in purchase_items_catalog if item.id in d.linked_purchase_item_ids %}{{ item.item_name }}{% if not loop.last %}, {% endif %}{% endfor %}
+            {% else %}
+              まだ紐付けされていません
+            {% endif %}
+          </p>
+        </div>
+        {% endif %}
         {% if d.is_editable %}
         <div class="draft-actions">
           <input type="text" class="revise-input" id="revise-{{ d.id }}" placeholder="修正指示（例: 2杯だった）">
@@ -373,6 +474,16 @@
         </div>
         <p class="raw-inline">{{ e.raw_text }}</p>
         <pre class="parsed-json">{{ e.parsed_json_display }}</pre>
+        {% if e.linked_ingredients %}
+        <div class="linked-ingredients">
+          <strong>紐付け材料:</strong>
+          <ul>
+            {% for ing in e.linked_ingredients %}
+            <li>{{ ing.item_name }}{% if ing.price is not none %} (¥{{ ing.price|int }}){% endif %}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
       </article>
       {% endfor %}
     {% else %}
@@ -649,6 +760,99 @@
         location.reload();
       } catch (err) {
         const errorEl = document.getElementById("draft-error-" + draftId);
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    }
+
+    const ingredientState = {};
+
+    function applyIngredientCandidates(draftId, data) {
+      const listEl = document.getElementById("ingredient-list-" + draftId);
+      if (!listEl) return;
+
+      const candidateSet = new Set(data.candidate_ingredients || []);
+      const linkedSet = new Set(data.linked_purchase_item_ids || []);
+      const items = data.purchase_items || [];
+      ingredientState[draftId] = { items };
+
+      const nameById = {};
+      items.forEach((p) => { nameById[p.id] = p.item_name; });
+
+      listEl.querySelectorAll("input[type=checkbox][data-purchase-item-id]").forEach((cb) => {
+        const id = parseInt(cb.dataset.purchaseItemId, 10);
+        const itemName = nameById[id];
+        if (!itemName) return;
+        cb.checked = linkedSet.has(id) || candidateSet.has(itemName);
+      });
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function fetchIngredientCandidates(draftId) {
+      const errorEl = document.getElementById("draft-error-" + draftId);
+      const btn = document.querySelector("#ingredient-panel-" + draftId + " .btn-ingredient-fetch");
+      errorEl.hidden = true;
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await fetch("/drafts/" + draftId + "/ingredient-candidates", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(parseErrorDetail(data, "候補の取得に失敗しました"));
+        applyIngredientCandidates(draftId, data);
+        updateLinkedSummary(draftId, data.linked_purchase_item_ids, data.purchase_items);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function updateLinkedSummary(draftId, linkedIds, purchaseItems) {
+      const el = document.getElementById("ingredient-linked-" + draftId);
+      if (!el) return;
+      if (!linkedIds || !linkedIds.length) {
+        el.textContent = "まだ紐付けされていません";
+        return;
+      }
+      const nameById = {};
+      (purchaseItems || []).forEach((p) => { nameById[p.id] = p.item_name; });
+      const names = linkedIds.map((id) => nameById[id] || ("ID " + id));
+      el.textContent = "保存済み: " + names.join(", ");
+    }
+
+    async function linkIngredients(draftId) {
+      const errorEl = document.getElementById("draft-error-" + draftId);
+      const listEl = document.getElementById("ingredient-list-" + draftId);
+      errorEl.hidden = true;
+
+      const checkboxes = listEl
+        ? listEl.querySelectorAll("input[type=checkbox][data-purchase-item-id]:checked")
+        : [];
+      const purchase_item_ids = Array.from(checkboxes).map((cb) =>
+        parseInt(cb.dataset.purchaseItemId, 10)
+      );
+
+      try {
+        const res = await fetch("/drafts/" + draftId + "/link-ingredients", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ purchase_item_ids }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(parseErrorDetail(data, "紐付けに失敗しました"));
+        const items = (ingredientState[draftId] && ingredientState[draftId].items) || [];
+        updateLinkedSummary(draftId, data.linked_purchase_item_ids, items);
+        errorEl.style.color = "#047857";
+        errorEl.textContent = "材料を " + data.linked_count + " 件紐付けました";
+        errorEl.hidden = false;
+      } catch (err) {
+        errorEl.style.color = "#b91c1c";
         errorEl.textContent = err.message;
         errorEl.hidden = false;
       }

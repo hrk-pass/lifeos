@@ -12,6 +12,16 @@ from app.schemas import (
     DraftResponse,
     DraftReviseRequest,
     DraftSuccess,
+    IngredientCandidatesResponse,
+    LinkIngredientsRequest,
+    LinkIngredientsResponse,
+    PurchaseItemOut,
+)
+from app.services.ingredient_service import (
+    build_ingredient_candidates,
+    commit_batch_ingredients,
+    get_linked_purchase_item_ids,
+    link_draft_ingredients,
 )
 from app.services.ai.draft_revision_parser import revise_draft
 from app.services.ai.food_event_parser import parse_food_event_text
@@ -108,6 +118,63 @@ def regenerate_draft(draft_id: int, db: Session = Depends(get_db)):
     return draft_response(draft)
 
 
+@router.post("/drafts/{draft_id}/ingredient-candidates", response_model=IngredientCandidatesResponse)
+def ingredient_candidates(draft_id: int, db: Session = Depends(get_db)):
+    """下書きと過去の購入商品から材料候補を AI 提案する"""
+    draft = _get_draft_or_404(draft_id, db)
+    _require_status(draft)
+
+    if draft.event_type != "batch_created":
+        raise HTTPException(
+            status_code=422,
+            detail="材料候補は event_type=batch_created の下書きのみ利用できます",
+        )
+
+    try:
+        result = build_ingredient_candidates(db, draft)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return IngredientCandidatesResponse(
+        candidate_ingredients=result["candidate_ingredients"],
+        purchase_items=[PurchaseItemOut(**row) for row in result["purchase_items"]],
+        linked_purchase_item_ids=result["linked_purchase_item_ids"],
+    )
+
+
+@router.post("/drafts/{draft_id}/link-ingredients", response_model=LinkIngredientsResponse)
+def link_ingredients(
+    draft_id: int,
+    body: LinkIngredientsRequest,
+    db: Session = Depends(get_db),
+):
+    """選択した purchase_items を下書きに紐付ける（DB が真実）"""
+    draft = _get_draft_or_404(draft_id, db)
+    _require_status(draft)
+
+    if draft.event_type != "batch_created":
+        raise HTTPException(
+            status_code=422,
+            detail="材料紐付けは event_type=batch_created の下書きのみ利用できます",
+        )
+
+    try:
+        count = link_draft_ingredients(db, draft, body.purchase_item_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    draft.updated_at = utc_now()
+    db.commit()
+
+    linked_ids = get_linked_purchase_item_ids(db, draft.id)
+    return LinkIngredientsResponse(
+        success=True,
+        draft_id=draft.id,
+        linked_count=count,
+        linked_purchase_item_ids=linked_ids,
+    )
+
+
 @router.post("/drafts/{draft_id}/commit", response_model=DraftSuccess)
 def commit_draft(draft_id: int, db: Session = Depends(get_db)):
     """下書きを確定し quick_events に保存する"""
@@ -122,6 +189,9 @@ def commit_draft(draft_id: int, db: Session = Depends(get_db)):
         confidence=draft.confidence,
     )
     db.add(event)
+    db.flush()
+
+    linked_count = commit_batch_ingredients(db, draft=draft, batch_event=event)
 
     draft.status = "confirmed"
     draft.updated_at = utc_now()
@@ -134,6 +204,7 @@ def commit_draft(draft_id: int, db: Session = Depends(get_db)):
         draft_id=draft.id,
         quick_event_id=event.id,
         status=draft.status,
+        linked_ingredient_count=linked_count if linked_count else None,
     )
 
 

@@ -9,6 +9,7 @@ from app.db import get_db
 from app.models import Capture, ParsedEvent
 from app.schemas import AnalyzeSuccess, ParsedEventData
 from app.services.ai_parser import parse_capture_text
+from app.services.purchase_item_service import sync_purchase_items_from_parsed
 
 router = APIRouter(tags=["analyze"])
 
@@ -37,6 +38,14 @@ def analyze_capture(capture_id: int, db: Session = Depends(get_db)):
         confidence=result["confidence"],
     )
     db.add(record)
+    db.flush()
+
+    sync_purchase_items_from_parsed(
+        db,
+        parsed_event_id=record.id,
+        parsed_json=result["parsed_json"],
+        event_type=result["event_type"],
+    )
     db.commit()
 
     return AnalyzeSuccess(

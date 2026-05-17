@@ -162,3 +162,100 @@ class QuickEvent(Base):
         nullable=False,
         default=utc_now,
     )
+
+    batch_ingredients: Mapped[list["BatchIngredient"]] = relationship(
+        "BatchIngredient",
+        back_populates="batch_event",
+        cascade="all, delete-orphan",
+    )
+
+
+class PurchaseItem(Base):
+    """購入イベント内の商品（parsed_events から抽出。Batch 紐付けの単位）"""
+
+    __tablename__ = "purchase_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parsed_event_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("parsed_events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    parsed_event: Mapped["ParsedEvent"] = relationship("ParsedEvent")
+    batch_links: Mapped[list["BatchIngredient"]] = relationship(
+        "BatchIngredient",
+        back_populates="purchase_item",
+    )
+
+
+class BatchIngredient(Base):
+    """確定 Batch（quick_events）と購入商品の関連（数量管理なし）"""
+
+    __tablename__ = "batch_ingredients"
+    __table_args__ = (
+        UniqueConstraint("batch_event_id", "purchase_item_id", name="uq_batch_purchase_item"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_event_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("quick_events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purchase_item_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("purchase_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    batch_event: Mapped["QuickEvent"] = relationship(
+        "QuickEvent", back_populates="batch_ingredients"
+    )
+    purchase_item: Mapped["PurchaseItem"] = relationship(
+        "PurchaseItem", back_populates="batch_links"
+    )
+
+
+class DraftIngredientLink(Base):
+    """下書き段階の材料紐付け（Commit 時に batch_ingredients へ確定）"""
+
+    __tablename__ = "draft_ingredient_links"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "purchase_item_id", name="uq_draft_purchase_item"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    draft_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("event_drafts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purchase_item_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("purchase_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
