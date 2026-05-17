@@ -3,24 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LifeOS — キャプチャ一覧</title>
+  <title>LifeOS</title>
   <style>
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      max-width: 720px;
+      max-width: 1100px;
       margin: 0 auto;
       padding: 1.5rem;
       background: #f5f5f5;
       color: #222;
     }
     h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
-    .meta { color: #666; font-size: 0.875rem; margin-bottom: 1.5rem; }
+    .meta { color: #666; font-size: 0.875rem; margin-bottom: 1rem; }
     .empty { color: #888; padding: 2rem; text-align: center; }
+
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid #ddd;
+    }
+    .tab {
+      font-size: 0.875rem;
+      padding: 0.55rem 1rem;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: #666;
+      cursor: pointer;
+      margin-bottom: -1px;
+    }
+    .tab:hover { color: #222; }
+    .tab.active {
+      color: #1a56db;
+      border-bottom-color: #1a56db;
+      font-weight: 600;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .card {
       background: #fff;
       border-radius: 8px;
-      padding: 1rem 1.25rem;
+      padding: 0.85rem 1.25rem;
       margin-bottom: 0.75rem;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
@@ -32,7 +58,6 @@
       gap: 0.5rem;
       font-size: 0.75rem;
       color: #666;
-      margin-bottom: 0.5rem;
     }
     .card-header-left {
       display: flex;
@@ -51,129 +76,304 @@
       border-radius: 4px;
       font-weight: 600;
     }
-    .status-pending {
-      background: #fef3c7;
-      color: #92400e;
+    .status-pending { background: #fef3c7; color: #92400e; }
+    .status-done { background: #d1fae5; color: #065f46; }
+
+    .raw-toggle {
+      margin-top: 0.65rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      overflow: hidden;
     }
-    .status-done {
-      background: #d1fae5;
-      color: #065f46;
+    .raw-toggle summary {
+      cursor: pointer;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      color: #555;
+      background: #fafafa;
+      list-style: none;
     }
+    .raw-toggle summary::-webkit-details-marker { display: none; }
+    .raw-toggle summary::before {
+      content: "▶ ";
+      font-size: 0.65rem;
+      color: #888;
+    }
+    .raw-toggle[open] summary::before { content: "▼ "; }
     .raw-text {
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       line-height: 1.5;
-      margin-bottom: 0.75rem;
+      padding: 0.75rem;
+      border-top: 1px solid #e5e7eb;
     }
-    .parsed-section {
-      border-top: 1px solid #eee;
-      padding-top: 0.75rem;
-      margin-top: 0.25rem;
-    }
-    .parsed-label {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: #888;
-      margin-bottom: 0.35rem;
-    }
-    .event-type {
-      display: inline-block;
-      background: #f3e8ff;
-      color: #6b21a8;
-      font-size: 0.8rem;
-      font-weight: 600;
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
-      margin-bottom: 0.5rem;
-    }
-    .confidence {
-      font-size: 0.75rem;
-      color: #666;
-      margin-left: 0.5rem;
-      font-weight: normal;
-    }
-    .parsed-json {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 0.65rem 0.75rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-      margin: 0;
-    }
-    .btn-analyze {
+
+    .btn-analyze, .btn-save {
       font-size: 0.75rem;
       padding: 0.35rem 0.75rem;
       border: none;
       border-radius: 6px;
-      background: #1a56db;
       color: #fff;
       cursor: pointer;
     }
-    .btn-analyze:disabled {
+    .btn-analyze { background: #1a56db; }
+    .btn-analyze:hover:not(:disabled) { background: #1e40af; }
+    .btn-save { background: #047857; }
+    .btn-save:hover:not(:disabled) { background: #065f46; }
+    .btn-analyze:disabled, .btn-save:disabled {
       background: #94a3b8;
       cursor: not-allowed;
     }
-    .btn-analyze:hover:not(:disabled) {
-      background: #1e40af;
-    }
-    .analyze-error {
+    .inline-error {
       color: #b91c1c;
       font-size: 0.75rem;
       margin-top: 0.35rem;
     }
+
+    .table-wrap {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+      vertical-align: middle;
+    }
+    th {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #666;
+      background: #fafafa;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: none; }
+    .event-type-badge {
+      display: inline-block;
+      background: #f3e8ff;
+      color: #6b21a8;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+    }
+    .price { color: #666; white-space: nowrap; }
+    .table-select, .table-input {
+      width: 100%;
+      min-width: 7rem;
+      font-size: 0.85rem;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      padding: 0.35rem 0.5rem;
+      font-family: inherit;
+    }
+    .table-input { min-width: 10rem; }
+    .row-error {
+      font-size: 0.7rem;
+      color: #b91c1c;
+      margin-top: 0.25rem;
+    }
   </style>
 </head>
 <body>
-  <h1>LifeOS — キャプチャ一覧</h1>
-  <p class="meta">新しい順 · 合計 {{ captures | length }} 件 · AI 解析は「解析する」から実行</p>
+  <h1>LifeOS</h1>
+  <p class="meta">キャプチャ {{ captures | length }} 件 · 内訳 {{ analyzed_rows | length }} 行</p>
 
-  {% if captures %}
-    {% for c in captures %}
-    <article class="card" id="capture-{{ c.id }}">
-      <div class="card-header">
-        <div class="card-header-left">
-          <time>{{ c.created_at_display }}</time>
-          <span class="source">{{ c.source }}</span>
-          {% if c.is_analyzed %}
-            <span class="status status-done">解析済み</span>
-          {% else %}
-            <span class="status status-pending">未解析</span>
-          {% endif %}
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="captures" role="tab" aria-selected="true">元データ</button>
+    <button type="button" class="tab" data-tab="analyzed" role="tab" aria-selected="false">解析済み</button>
+  </nav>
+
+  <section id="panel-captures" class="tab-panel active" role="tabpanel">
+    {% if captures %}
+      {% for c in captures %}
+      <article class="card" id="capture-{{ c.id }}">
+        <div class="card-header">
+          <div class="card-header-left">
+            <time>{{ c.created_at_display }}</time>
+            <span class="source">{{ c.source }}</span>
+            {% if c.is_analyzed %}
+              <span class="status status-done">解析済み</span>
+            {% else %}
+              <span class="status status-pending">未解析</span>
+            {% endif %}
+          </div>
+          <button
+            type="button"
+            class="btn-analyze"
+            data-capture-id="{{ c.id }}"
+            onclick="analyzeCapture(this)"
+          >
+            {% if c.is_analyzed %}再解析する{% else %}解析する{% endif %}
+          </button>
         </div>
-        <button
-          type="button"
-          class="btn-analyze"
-          data-capture-id="{{ c.id }}"
-          onclick="analyzeCapture(this)"
-        >
-          {% if c.is_analyzed %}再解析する{% else %}解析する{% endif %}
-        </button>
-      </div>
-      <div class="raw-text">{{ c.raw_text }}</div>
 
-      {% if c.parsed %}
-      <section class="parsed-section">
-        <p class="parsed-label">AI 解析結果（{{ c.parsed.analyzed_at_display }}）</p>
-        <span class="event-type">
-          {{ c.parsed.event_type }}
-          <span class="confidence">confidence {{ "%.2f"|format(c.parsed.confidence) }}</span>
-        </span>
-        <pre class="parsed-json">{{ c.parsed.parsed_json_display }}</pre>
-      </section>
-      {% endif %}
-      <p class="analyze-error" id="error-{{ c.id }}" hidden></p>
-    </article>
-    {% endfor %}
-  {% else %}
-    <p class="empty">まだデータがありません。<br>iPhone ショートカットから POST してください。</p>
-  {% endif %}
+        <details class="raw-toggle">
+          <summary>元テキスト（{{ c.raw_preview }}）</summary>
+          <div class="raw-text">{{ c.raw_text }}</div>
+        </details>
+
+        <p class="inline-error" id="error-{{ c.id }}" hidden></p>
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="empty">まだデータがありません。<br>iPhone ショートカットから POST してください。</p>
+    {% endif %}
+  </section>
+
+  <section id="panel-analyzed" class="tab-panel" role="tabpanel">
+    {% if analyzed_rows %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>日時</th>
+            <th>店名</th>
+            <th>内訳</th>
+            <th>単価</th>
+            <th>AI種別</th>
+            <th>カテゴリ</th>
+            <th>メモ</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in analyzed_rows %}
+          <tr id="row-{{ row.parsed_event_id }}-{{ row.item_index }}">
+            <td>{{ row.created_at_display }}</td>
+            <td>{{ row.store or "—" }}</td>
+            <td>{{ row.item_name }}</td>
+            <td class="price">
+              {% if row.item_price is not none %}¥{{ row.item_price }}{% else %}—{% endif %}
+            </td>
+            <td><span class="event-type-badge">{{ row.event_type }}</span></td>
+            <td>
+              <select
+                class="table-select"
+                id="category-{{ row.parsed_event_id }}-{{ row.item_index }}"
+                name="user_category"
+              >
+                <option value="">—</option>
+                {% for cat in user_categories %}
+                <option value="{{ cat }}" {% if row.user_category == cat %}selected{% endif %}>{{ cat }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input
+                type="text"
+                class="table-input"
+                id="memo-{{ row.parsed_event_id }}-{{ row.item_index }}"
+                name="memo"
+                value="{{ row.memo }}"
+                placeholder="メモ"
+              >
+            </td>
+            <td>
+              <button
+                type="button"
+                class="btn-save"
+                id="save-btn-{{ row.parsed_event_id }}-{{ row.item_index }}"
+                onclick="saveAnnotation({{ row.parsed_event_id }}, {{ row.item_index }})"
+              >保存</button>
+              <p class="row-error" id="save-error-{{ row.parsed_event_id }}-{{ row.item_index }}" hidden></p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">解析済みの内訳がありません。<br>「元データ」タブで解析を実行してください。</p>
+    {% endif %}
+  </section>
 
   <script>
+    (function initTabs() {
+      const tabs = document.querySelectorAll(".tab");
+      const panels = {
+        captures: document.getElementById("panel-captures"),
+        analyzed: document.getElementById("panel-analyzed"),
+      };
+
+      function activate(name) {
+        tabs.forEach((t) => {
+          const on = t.dataset.tab === name;
+          t.classList.toggle("active", on);
+          t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        Object.entries(panels).forEach(([key, el]) => {
+          el.classList.toggle("active", key === name);
+        });
+        history.replaceState(null, "", "#" + name);
+      }
+
+      tabs.forEach((t) => t.addEventListener("click", () => activate(t.dataset.tab)));
+
+      const hash = location.hash.replace("#", "");
+      if (hash === "analyzed" || hash === "captures") {
+        activate(hash);
+      }
+    })();
+
+    function rowSuffix(parsedEventId, itemIndex) {
+      return parsedEventId + "-" + itemIndex;
+    }
+
+    async function saveAnnotation(parsedEventId, itemIndex) {
+      const suffix = rowSuffix(parsedEventId, itemIndex);
+      const btn = document.getElementById("save-btn-" + suffix);
+      const errorEl = document.getElementById("save-error-" + suffix);
+      const category = document.getElementById("category-" + suffix).value;
+      const memo = document.getElementById("memo-" + suffix).value;
+
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "…";
+
+      try {
+        const res = await fetch(
+          "/annotations/" + parsedEventId + "/" + itemIndex,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              user_category: category || null,
+              memo: memo || null,
+              tags_json: "[]",
+            }),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = data.detail;
+          const msg = Array.isArray(detail)
+            ? detail.map((d) => d.msg || JSON.stringify(d)).join(", ")
+            : (detail || "保存に失敗しました");
+          throw new Error(msg);
+        }
+        btn.textContent = "✓";
+        setTimeout(() => { btn.textContent = originalLabel; }, 1200);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+        btn.textContent = originalLabel;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     async function analyzeCapture(button) {
       const id = button.dataset.captureId;
       const errorEl = document.getElementById("error-" + id);
@@ -189,6 +389,7 @@
         if (!res.ok) {
           throw new Error(data.detail || "解析に失敗しました");
         }
+        location.href = "/#analyzed";
         location.reload();
       } catch (err) {
         errorEl.textContent = err.message;

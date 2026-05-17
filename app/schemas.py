@@ -28,3 +28,24 @@ class AnalyzeSuccess(BaseModel):
 
     success: bool = True
     event: ParsedEventData
+
+
+class AnnotationCreate(BaseModel):
+    """POST /annotations/{parsed_event_id}/{item_index} のリクエストボディ"""
+
+    user_category: str | None = Field(
+        default=None, description="人間が付与したカテゴリ"
+    )
+    memo: str | None = Field(default=None, description="自由メモ")
+    tags_json: str = Field(default="[]", description="タグ JSON 文字列")
+
+
+class AnnotationSuccess(BaseModel):
+    """POST /annotations/{parsed_event_id}/{item_index} のレスポンス"""
+
+    success: bool = True
+    parsed_event_id: int
+    item_index: int
+    user_category: str | None = None
+    memo: str | None = None
+    tags_json: str = "[]"
