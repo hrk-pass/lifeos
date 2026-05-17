@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LifeOS — キャプチャ一覧</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 1.5rem;
+      background: #f5f5f5;
+      color: #222;
+    }
+    h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+    .meta { color: #666; font-size: 0.875rem; margin-bottom: 1.5rem; }
+    .empty { color: #888; padding: 2rem; text-align: center; }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+    .card-header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .source {
+      background: #e8f0fe;
+      color: #1a56db;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+    }
+    .status {
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .status-pending {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .status-done {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    .raw-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      margin-bottom: 0.75rem;
+    }
+    .parsed-section {
+      border-top: 1px solid #eee;
+      padding-top: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .parsed-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #888;
+      margin-bottom: 0.35rem;
+    }
+    .event-type {
+      display: inline-block;
+      background: #f3e8ff;
+      color: #6b21a8;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+    }
+    .confidence {
+      font-size: 0.75rem;
+      color: #666;
+      margin-left: 0.5rem;
+      font-weight: normal;
+    }
+    .parsed-json {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 0.65rem 0.75rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+    }
+    .btn-analyze {
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border: none;
+      border-radius: 6px;
+      background: #1a56db;
+      color: #fff;
+      cursor: pointer;
+    }
+    .btn-analyze:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .btn-analyze:hover:not(:disabled) {
+      background: #1e40af;
+    }
+    .analyze-error {
+      color: #b91c1c;
+      font-size: 0.75rem;
+      margin-top: 0.35rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>LifeOS — キャプチャ一覧</h1>
+  <p class="meta">新しい順 · 合計 {{ captures | length }} 件 · AI 解析は「解析する」から実行</p>
+
+  {% if captures %}
+    {% for c in captures %}
+    <article class="card" id="capture-{{ c.id }}">
+      <div class="card-header">
+        <div class="card-header-left">
+          <time>{{ c.created_at_display }}</time>
+          <span class="source">{{ c.source }}</span>
+          {% if c.is_analyzed %}
+            <span class="status status-done">解析済み</span>
+          {% else %}
+            <span class="status status-pending">未解析</span>
+          {% endif %}
+        </div>
+        <button
+          type="button"
+          class="btn-analyze"
+          data-capture-id="{{ c.id }}"
+          onclick="analyzeCapture(this)"
+        >
+          {% if c.is_analyzed %}再解析する{% else %}解析する{% endif %}
+        </button>
+      </div>
+      <div class="raw-text">{{ c.raw_text }}</div>
+
+      {% if c.parsed %}
+      <section class="parsed-section">
+        <p class="parsed-label">AI 解析結果（{{ c.parsed.analyzed_at_display }}）</p>
+        <span class="event-type">
+          {{ c.parsed.event_type }}
+          <span class="confidence">confidence {{ "%.2f"|format(c.parsed.confidence) }}</span>
+        </span>
+        <pre class="parsed-json">{{ c.parsed.parsed_json_display }}</pre>
+      </section>
+      {% endif %}
+      <p class="analyze-error" id="error-{{ c.id }}" hidden></p>
+    </article>
+    {% endfor %}
+  {% else %}
+    <p class="empty">まだデータがありません。<br>iPhone ショートカットから POST してください。</p>
+  {% endif %}
+
+  <script>
+    async function analyzeCapture(button) {
+      const id = button.dataset.captureId;
+      const errorEl = document.getElementById("error-" + id);
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      button.disabled = true;
+      const originalLabel = button.textContent;
+      button.textContent = "解析中...";
+
+      try {
+        const res = await fetch("/analyze/" + id, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || "解析に失敗しました");
+        }
+        location.reload();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    }
+  </script>
+</body>
+</html>

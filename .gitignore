@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.DS_Store
+
+# ローカル DB（生データはリポジトリに含めない）
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
